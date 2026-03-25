@@ -1,14 +1,15 @@
 #include "SecureAccessGuard.h"
-#include "SecureBuffer.h"  // Must include full definition here
+#include "SecureBuffer.h"  
 
 SecureAccessGuard::SecureAccessGuard(SecureBuffer& buf)
     : buf_(buf)
 {
+    // constructor will allow reads
     buf_.unlock_read();
 }
 
 SecureAccessGuard::~SecureAccessGuard()
 {
-    // we remembet to close the buffer, rehgardless of the exception
+    // lock it before the secure buffer wipes it   
     buf_.lock_access();
 }

@@ -36,9 +36,6 @@ constexpr size_t             MEMLIMIT = crypto_pwhash_MEMLIMIT_SENSITIVE;
 // ─────────────────────────────────────────────────────────────────────────────
 // Base64 helpers (ciphertext / salt / nonce are not secret)
 // ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// Base64 helpers (ciphertext / salt / nonce are not secret)
-// ─────────────────────────────────────────────────────────────────────────────
 std::string b64_encode(const unsigned char* data, size_t len) {
     size_t encoded_len = sodium_base64_encoded_len(len, sodium_base64_VARIANT_ORIGINAL);
     std::string out(encoded_len, '\0');
@@ -290,71 +287,25 @@ SecureBuffer get_passphrase_with_confirmation() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // do_encrypt
-// Fix: plaintext is read directly into a SecureBuffer without any intermediate
-// std::string accumulator.  The flow is:
-//
-//   Old: line → lines[i] → joined (std::string) → SecureBuffer   (3 copies)
-//   New: line → stage (one short-lived std::string per line, zeroed immediately
-//                      after copying into the SecureBuffer)        (1 copy)
-//
-// We don't know the total size up front for multi-line input, so we use a
-// two-pass approach: collect raw line lengths to compute total size, then
-// allocate exactly once and fill.  Each std::string line is zeroed as soon as
-// its content has been transferred.
+// Reads a single message line (spaces allowed), then encrypts it.
 // ─────────────────────────────────────────────────────────────────────────────
 void do_encrypt() {
     std::cout << "\n─── ENCRYPT ─────────────────────────────────────────────\n";
-    std::cout << "  Enter the message to encrypt.\n";
-    std::cout << "  (Finish with a blank line)\n\n";
- 
-    // ── Pass 1: read lines, track total byte count ────────────────────────
-    // Each line is a short-lived std::string that we zero as soon as we're done
-    // with it.  This is still one temporary string per line, but there is no
-    // secondary accumulator (no `joined`, no `lines` vector kept alive).
-    //
-    // We store the raw bytes in a plain heap buffer just long enough to measure
-    // and then move them into the SecureBuffer.  A std::vector<unsigned char>
-    // with an immediate sodium_memzero after the SecureBuffer copy keeps the
-    // exposure window as short as possible.
-    std::vector<unsigned char> staging;   // ordinary heap — zeroed before free
-    staging.reserve(4096);
- 
+    std::cout << "  Enter the message to encrypt and press Enter:\n\n";
+    std::cout << "  > ";
+
     std::string line;
-    bool first = true;
-    while (true) {
-        std::cout << " >";
-        if (!std::getline(std::cin, line)) break;
-        if (line.empty()) break;
- 
-        // Prepend newline separator for lines after the first.
-        if (!first) staging.push_back('\n');
-        first = false;
- 
-        staging.insert(staging.end(),
-                       reinterpret_cast<const unsigned char*>(line.data()),
-                       reinterpret_cast<const unsigned char*>(line.data()) + line.size());
- 
-        // Zero and discard the std::string immediately — it has served its purpose.
-        sodium_memzero(line.data(), line.size());
-        line.clear();
-    }
-    // Ensure `line` is zeroed even on a break-without-clear path.
-    if (!line.empty()) { sodium_memzero(line.data(), line.size()); line.clear(); }
- 
-    if (staging.empty()) {
+    if (!std::getline(std::cin, line) || line.empty()) {
         std::cout << "\n  No message entered.\n";
         return;
     }
- 
-    // ── Single allocation + single copy → SecureBuffer ───────────────────
-    SecureBuffer plaintext(staging.size());
-    std::memcpy(plaintext.data(), staging.data(), staging.size());
-    plaintext.set_size(staging.size());
- 
-    // Zero and free the staging buffer immediately.
-    sodium_memzero(staging.data(), staging.size());
-    staging.clear();
-    staging.shrink_to_fit(); // release heap memory now, not at scope exit
+
+    SecureBuffer plaintext(line.size());
+    std::memcpy(plaintext.data(), line.data(), line.size());
+    plaintext.set_size(line.size());
+
+    sodium_memzero(line.data(), line.size());
+    line.clear();
  
     std::cout << "\n";
     SecureBuffer passphrase = get_passphrase_with_confirmation();

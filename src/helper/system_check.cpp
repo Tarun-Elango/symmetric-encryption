@@ -27,13 +27,15 @@ void clear_screen() {
 
 bool startup_checks() {
     bool ok = true;
+    bool memlock_info_available = false;
 
     std::cout << "[startup] Running secure memory checks...\n";
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
-    struct rlimit rl{};  // FIX #1: moved outside conditional scope
+    struct rlimit rl{};
 
     if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0) {
+        memlock_info_available = true;
         constexpr rlim_t EXPECTED_LOCK_BYTES = 512UL * 1024;
 
         std::cout << "[startup] RLIMIT_MEMLOCK: cur="
@@ -52,6 +54,7 @@ bool startup_checks() {
             std::cout << "[startup] RLIMIT_MEMLOCK looks sufficient (>= 512KB)\n";
         }
     } else {
+        ok = false;
         std::cerr << "[warning] Failed to read RLIMIT_MEMLOCK\n";
     }
 #endif
@@ -63,7 +66,6 @@ bool startup_checks() {
     if (probe) {
         std::cout << "[startup] Allocated secure memory (4KB)\n";
 
-        // FIX #2: Treat as heuristic, not definitive
         if (sodium_mlock(probe, 4096) != 0) {
             ok = false;
             std::cerr
@@ -120,10 +122,16 @@ bool startup_checks() {
             << "[startup] ✓ All secure memory checks passed"
             << " | libsodium=" << sodium_version_string()
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
-            << " | RLIMIT_MEMLOCK(cur="
-            << (rl.rlim_cur == RLIM_INFINITY ? "inf" : std::to_string((unsigned long long)rl.rlim_cur))
-            << ", max="
-            << (rl.rlim_max == RLIM_INFINITY ? "inf" : std::to_string((unsigned long long)rl.rlim_max))
+            << " | RLIMIT_MEMLOCK("
+            << (memlock_info_available
+                    ? "cur=" + (rl.rlim_cur == RLIM_INFINITY
+                                     ? std::string("inf")
+                                     : std::to_string((unsigned long long)rl.rlim_cur)) +
+                          ", max=" +
+                          (rl.rlim_max == RLIM_INFINITY
+                               ? std::string("inf")
+                               : std::to_string((unsigned long long)rl.rlim_max))
+                    : std::string("unavailable"))
             << ")"
 #endif
             << " | mlock_probe=ok\n";
@@ -149,6 +157,7 @@ void print_system_warnings() {
 
             // Skip interfaces that are down
             if (!(ifa->ifa_flags & IFF_UP)) continue;
+            if (!(ifa->ifa_flags & IFF_RUNNING)) continue;
 
             int family = ifa->ifa_addr->sa_family;
 
@@ -172,6 +181,9 @@ void print_system_warnings() {
 
                     // Skip link-local (optional but useful)
                     if (ip.rfind("169.254.", 0) == 0) continue;
+                    if (ip.rfind("fe80:", 0) == 0) continue;
+
+                    if (family == AF_INET && !(ifa->ifa_flags & IFF_BROADCAST)) continue;
 
                     found_external = true;
 
