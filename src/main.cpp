@@ -1,11 +1,7 @@
 #include <sodium.h>
 #include <iostream>
 #include <string>
-#include "encrypt_decrypt.cpp"
-
-
-//g++ -O2 -std=c++17 main.cpp $(pkg-config --cflags --libs libsodium) -o main
-//./main
+#include "helper/encrypt_decrypt.cpp"
 
 static const char* MENU = R"(
   [1]  Encrypt a message
@@ -21,7 +17,6 @@ int main() {
     }
     clear_screen();
     startup_checks();
-    //std::cout << BANNER << '\n';
     std::cout << " ┌─ SYSTEM CHECK "<< std::string(41, '-') << '\n';
     print_system_warnings();
     std::cout << " └" << std::string(56, '-') << "\\n\n";
@@ -39,7 +34,7 @@ int main() {
         } else if (choice == "2"){
             do_decrypt();
         } else if (choice == "0"){
-            std::cout << "\n [*] Exiting. Shutdown down and clearing RAM.\n\n";
+            std::cout << "\n [*] Exiting.\n\n";
             return 0;
         } else {
             std::cout << "\n [!] Invalid choice. Please enter 1, 2, or 0.\n";

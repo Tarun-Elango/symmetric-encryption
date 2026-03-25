@@ -19,8 +19,8 @@
 #endif
 
 #include "system_check.cpp"
-#include "SecureBuffer.cpp"
-#include "SecureAccessGuard.cpp"
+#include "../data-structure/SecureBuffer.cpp"
+#include "../data-structure/SecureAccessGuard.cpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
