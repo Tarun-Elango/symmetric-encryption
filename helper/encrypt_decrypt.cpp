@@ -1,6 +1,5 @@
 #include <sodium.h>
 #include <iostream>
-#include <sstream>
 
 #include <algorithm>
 #include <cctype>
@@ -92,6 +91,7 @@ SecureBuffer derive_key(const SecureBuffer& passphrase, const unsigned char* sal
         throw std::runtime_error("Key derivation failed (out of memory?)");
 
     // key is R/W here; caller decides the protection level it needs.
+    key.lock_access();
     return key;
 }
 
@@ -236,7 +236,8 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
     if (plaintext_len > 0)
         std::memcpy(exact.data(), plaintext_buf.data(), plaintext_len);
     exact.set_size(plaintext_len);
- 
+    
+
     return exact;
 }
 
@@ -440,23 +441,28 @@ void do_decrypt() {
  
     if (result.has_value()) {
         std::cout << "\n─── DECRYPTED MESSAGE ───────────────────────────────────\n\n";
- 
-        std::string display;
         {
-            // Guard unlocks result buffer read-only for to_string(); re-locks
-            // on scope exit before display is used (display is a copy, so that
-            // is fine) and before we zero display below.
+            // Print directly from secure memory while unlocked read-only to
             SecureAccessGuard res_guard(result.value());
-            display = result.value().to_string();
+            const unsigned char* msg = result.value().data();
+            const size_t msg_len = result.value().size();
+
+            std::cout << "  ";
+            for (size_t i = 0; i < msg_len; ++i) {
+                const char ch = static_cast<char>(msg[i]);
+                if (ch == '\r') continue; // ignore CR in CRLF payloads
+                if (ch == '\n') {
+                    std::cout << '\n';
+                    if (i + 1 < msg_len) std::cout << "  ";
+                } else {
+                    std::cout << ch;
+                }
+            }
+            if (msg_len == 0 || static_cast<char>(msg[msg_len - 1]) != '\n') {
+                std::cout << '\n';
+            }
         } // result buffer locked here
- 
-        std::istringstream ss(display);
-        std::string msg_line;
-        while (std::getline(ss, msg_line))
-            std::cout << "  " << msg_line << '\n';
- 
-        sodium_memzero(display.data(), display.size());
- 
+
         std::cout << '\n' << std::string(58, '-') << '\n';
         std::cout << "\n  [!] READ ON THIS SCREEN ONLY. Do not copy to phone.\n";
         std::cout << "\n  Press Enter to WIPE message and return to menu...";
