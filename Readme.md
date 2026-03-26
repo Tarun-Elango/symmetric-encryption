@@ -1,6 +1,6 @@
 ## Symetric Encryption
 
-Designed using libsodium, with strong memory safety guarantees (mlocked buffers, explicit access control, and zeroization).
+Built with libsodium and secure secret-handling practices (mlocked buffers, explicit read/write access control, and best-effort zeroization). Note: this reduces key exposure risk, but does not provide formal memory-safety guarantees for all C++ code paths.
 
 ## How to Build and Run
 
@@ -22,4 +22,3 @@ g++ -O2 -std=c++17 main.cpp $(pkg-config --cflags --libs libsodium) -o main
 
 ### Run
 ./main
-
