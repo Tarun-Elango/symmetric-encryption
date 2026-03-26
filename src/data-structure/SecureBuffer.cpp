@@ -33,6 +33,7 @@ SecureBuffer::~SecureBuffer() {
 SecureBuffer::SecureBuffer(SecureBuffer&& o) noexcept
     : ptr_(o.ptr_), capacity_(o.capacity_), size_(o.size_)
 {
+    // ownershop of the buffer is now transferred to the new object, not copied.
     o.ptr_ = nullptr;
     o.capacity_ = 0;
     o.size_ = 0;

@@ -44,12 +44,12 @@ std::string b64_encode(const unsigned char* data, size_t len) {
     return out;
 }
  
-std::vector<unsigned char> b64_decode(const std::string& encoded) {
-    std::vector<unsigned char> out(encoded.size());
+std::vector<unsigned char> b64_decode(const unsigned char* encoded, size_t encoded_len) {
+    std::vector<unsigned char> out(encoded_len);
     size_t decoded_len = 0;
     if (sodium_base642bin(
             out.data(), out.size(),
-            encoded.c_str(), encoded.size(),
+            reinterpret_cast<const char*>(encoded), encoded_len,
             nullptr, &decoded_len, nullptr,
             sodium_base64_VARIANT_ORIGINAL) != 0) {
         throw std::runtime_error("Base64 decode failed");
@@ -146,31 +146,55 @@ std::string encrypt_message(const SecureBuffer& plaintext,
 // ─────────────────────────────────────────────────────────────────────────────
 // decrypt_message
 // ─────────────────────────────────────────────────────────────────────────────
-std::optional<SecureBuffer> decrypt_message(const std::string& payload,
+std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
                                              const SecureBuffer& passphrase) {
-    // ── Parse the base64:base64:base64 payload ────────────────────────────
-    std::vector<std::string> parts;
-    {
-        std::istringstream stream(payload);
-        std::string token;
-        while (std::getline(stream, token, ':'))
-            parts.push_back(token);
-    }
- 
-    if (parts.size() != 3) {
-        std::cout << "\n  [!] Invalid payload format.\n";
-        return std::nullopt;
-    }
- 
     std::vector<unsigned char> salt, nonce, ciphertext;
     try {
-        salt       = b64_decode(parts[0]);
-        nonce      = b64_decode(parts[1]);
-        ciphertext = b64_decode(parts[2]);
+        SecureAccessGuard payload_guard(payload);
+
+        size_t p_begin = 0// start of useful payload
+        size_t p_end = payload.size();
+        size_t first_colon = 0;
+        size_t second_colon = 0;
+        bool   invalid_colon_layout = false;
+
+        const unsigned char* p = payload.data();
+
+        // Trim ASCII whitespace without materializing payload in std::string.
+        while (p_begin < p_end && std::isspace(p[p_begin])) ++p_begin;
+        while (p_end > p_begin && std::isspace(p[p_end - 1])) --p_end;
+
+        for (size_t i = p_begin; i < p_end; ++i) {
+            if (p[i] == ':') {
+                if (first_colon == 0 && i != p_begin) {
+                    first_colon = i;
+                } else if (second_colon == 0 && i > first_colon + 1) {
+                    second_colon = i;
+                } else {
+                    invalid_colon_layout = true;
+                    break;
+                }
+            }
+        }
+
+        const bool format_ok = !invalid_colon_layout &&
+                               (p_begin < p_end) &&
+                               (first_colon > p_begin) &&
+                               (second_colon > first_colon + 1) &&
+                               (second_colon + 1 < p_end);
+
+        if (!format_ok) {
+            std::cout << "\n  [!] Invalid payload format.\n";
+            return std::nullopt;
+        }
+
+        salt       = b64_decode(p + p_begin, first_colon - p_begin);
+        nonce      = b64_decode(p + first_colon + 1, second_colon - first_colon - 1);
+        ciphertext = b64_decode(p + second_colon + 1, p_end - second_colon - 1);
     } catch (const std::exception&) {
         std::cout << "\n  [!] Base64 decode error — payload may be corrupted.\n";
         return std::nullopt;
-    }
+    } 
  
     if (salt.size() != SALT_LEN || nonce.size() != NONCE_LEN ||
         ciphertext.size() < TAG_LEN) {
@@ -286,30 +310,78 @@ SecureBuffer get_passphrase_with_confirmation() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// get_message_secure
+// Reads message bytes directly into secure memory to avoid plaintext std::string
+// staging for user-entered messages.
+// ─────────────────────────────────────────────────────────────────────────────
+std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
+    constexpr size_t MAX_MESSAGE = 16 * 1024;
+    SecureBuffer buf(MAX_MESSAGE);
+    size_t len = 0;
+
+    std::cout << prompt << std::flush;
+
+#ifdef _WIN32
+    char c;
+    while ((c = _getche()) != '\r' && c != '\n') {
+        if (c == '\b' || static_cast<unsigned char>(c) == 127) {
+            if (len > 0) {
+                buf.data()[--len] = 0;
+                std::cout << "\b \b" << std::flush;
+            }
+        } else if (len < MAX_MESSAGE) {
+            buf.data()[len++] = static_cast<unsigned char>(c);
+        }
+    }
+    std::cout << '\n';
+#else
+    struct termios old_term, new_term;
+    tcgetattr(STDIN_FILENO, &old_term);
+    new_term = old_term;
+    new_term.c_lflag &= ~ICANON; // immediate char reads; keep ECHO enabled
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != EOF) {
+        if (ch == 127 || ch == '\b') { // backspace / DEL
+            if (len > 0) {
+                buf.data()[--len] = 0;// Zero the removed byte.
+                std::cout << "\b \b" << std::flush;
+            }
+        } else if (len < MAX_MESSAGE) {
+            buf.data()[len++] = static_cast<unsigned char>(ch);
+        }
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+    std::cout << '\n';
+#endif
+
+    if (len == 0) return std::nullopt;
+    buf.set_size(len);
+    buf.lock_access();
+    return buf;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // do_encrypt
 // Reads a single message line (spaces allowed), then encrypts it.
 // ─────────────────────────────────────────────────────────────────────────────
 void do_encrypt() {
     std::cout << "\n─── ENCRYPT ─────────────────────────────────────────────\n";
     std::cout << "  Enter the message to encrypt and press Enter:\n\n";
-    std::cout << "  > ";
-
-    std::string line;
-    if (!std::getline(std::cin, line) || line.empty()) {
+    auto plaintext_opt = get_message_secure("  > ");
+    if (!plaintext_opt.has_value()) {
         std::cout << "\n  No message entered.\n";
         return;
     }
 
-    SecureBuffer plaintext(line.size());
-    std::memcpy(plaintext.data(), line.data(), line.size());
-    plaintext.set_size(line.size());
-
-    sodium_memzero(line.data(), line.size());
-    line.clear();
+    SecureBuffer plaintext = std::move(*plaintext_opt); // plaintext_opt does not own the buffer/data
+    plaintext.lock_access();
  
     std::cout << "\n";
     SecureBuffer passphrase = get_passphrase_with_confirmation();
- 
+    passphrase.lock_access();
     // Both buffers go read-only inside their own guards.
     // Guards unlock on construction and re-lock on destruction (scope exit),
     // so an exception inside encrypt_message cannot leave them unlocked.
@@ -319,18 +391,21 @@ void do_encrypt() {
         SecureAccessGuard pp_guard(passphrase);
         try {
             ciphertext = encrypt_message(plaintext, passphrase);
+            
         } catch (const std::exception&) {
             std::cout << "\n  [!] Encryption failed.\n";
             return;
             // Both guards lock on scope exit here too.
         }
     } // plaintext and passphrase locked here
- 
+        
     std::cout << "\n─── ENCRYPTED MESSAGE ───────────────────────────────────\n\n";
     std::cout << "  " << std::string(54, '-') << '\n';
     std::cout << "  " << ciphertext << '\n';
     std::cout << "  " << std::string(54, '-') << '\n';
     std::cout << "\n  Paste this into WhatsApp. It is safe to send openly.\n";
+    sodium_memzero(ciphertext.data(), ciphertext.size());
+    ciphertext.clear();
     std::cout << "\n  Press Enter to clear screen and return to menu...";
     std::cin.get();
     clear_screen();
@@ -342,24 +417,18 @@ void do_encrypt() {
 void do_decrypt() {
     std::cout << "\n─── DECRYPT ─────────────────────────────────────────────\n";
     std::cout << "  Paste the encrypted message below and press Enter:\n\n";
-    std::cout << "  > ";
- 
-    std::string payload;
-    if (!std::getline(std::cin, payload) || payload.empty()) {
+    auto payload_opt = get_message_secure("  > ");
+    if (!payload_opt.has_value()) {
         std::cout << "\n  [!] No input received.\n";
         return;
     }
- 
-    auto trim = [](std::string& s) {
-        s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-                [](unsigned char c) { return !std::isspace(c); }));
-        s.erase(std::find_if(s.rbegin(), s.rend(),
-                [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
-    };
-    trim(payload);
+
+    SecureBuffer payload = std::move(*payload_opt);
+    payload.lock_access();
  
     std::cout << "\n";
     SecureBuffer passphrase = get_passphrase("  Passphrase: ");
+    passphrase.lock_access();
  
     std::optional<SecureBuffer> result;
     {
