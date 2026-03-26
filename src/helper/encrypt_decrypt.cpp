@@ -152,7 +152,7 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
     try {
         SecureAccessGuard payload_guard(payload);
 
-        size_t p_begin = 0// start of useful payload
+        size_t p_begin = 0;// start of useful payload
         size_t p_end = payload.size();
         size_t first_colon = 0;
         size_t second_colon = 0;
