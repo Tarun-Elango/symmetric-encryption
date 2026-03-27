@@ -5,7 +5,7 @@
 - [Purpose](#purpose)
 - [How it works](#how-it-works)
 - [How to Build and Run](#how-to-build-and-run)
-- [TODO - future improvements](#todo)
+- [TODO - future improvements](#todo )
 
 
 ## Purpose
@@ -252,7 +252,7 @@ g++ -std=c++17 -Wall -Wextra -pedantic -O2 \
 ./main
 
 ---
-### TODO - future improvements
+### TODO
 
 - get_message_secure terminal echo/prints - fix based on user needs
 - SecureAccessGuard - bad for multithreaded
