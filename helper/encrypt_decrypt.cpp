@@ -272,7 +272,7 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
     }
  
     // ── Key derivation ────────────────────────────────────────────────────
-    std::cout << "\n  [*] Deriving key (this takes a moment by design)..." << std::flush;
+    // std::cout << "\n  [*] Deriving key (this takes a moment by design)..." << std::flush;
  
     SecureBuffer key = derive_key(passphrase, salt.data());
     std::cout << " done.\n";
@@ -479,7 +479,7 @@ void do_encrypt() {
         std::cout << '\n';
     }// ciphertext locked here
     std::cout << "  " << std::string(54, '-') << '\n';
-    std::cout << "\n  Paste this into WhatsApp. It is safe to send openly.\n";
+    std::cout << "\n  This is now safe to send openly.\n";
     std::cout << "\n  Press Enter to clear screen and return to menu...";
     std::cin.get();
     clear_screen();
@@ -537,7 +537,7 @@ void do_decrypt() {
         } // result buffer locked here
 
         std::cout << '\n' << std::string(58, '-') << '\n';
-        std::cout << "\n  [!] READ ON THIS SCREEN ONLY. Do not copy to phone.\n";
+       
         std::cout << "\n  Press Enter to WIPE message and return to menu...";
         std::cin.get();
  
