@@ -35,14 +35,28 @@ constexpr size_t             MEMLIMIT = crypto_pwhash_MEMLIMIT_SENSITIVE;
 namespace {
 // zero the salt, nonce, and ciphertext buffers on exits
 struct DecodedBufferWiper {
-    std::vector<unsigned char>& salt;
-    std::vector<unsigned char>& nonce;
-    std::vector<unsigned char>& ciphertext;
+    SecureBuffer* salt;
+    SecureBuffer* nonce;
+    SecureBuffer* ciphertext;
 
     ~DecodedBufferWiper() noexcept {
-        if (!salt.empty()) sodium_memzero(salt.data(), salt.size());
-        if (!nonce.empty()) sodium_memzero(nonce.data(), nonce.size());
-        if (!ciphertext.empty()) sodium_memzero(ciphertext.data(), ciphertext.size());
+        if (salt && salt->size() > 0) sodium_memzero(salt->data(), salt->size());
+        if (nonce && nonce->size() > 0) sodium_memzero(nonce->data(), nonce->size());
+        if (ciphertext && ciphertext->size() > 0) sodium_memzero(ciphertext->data(), ciphertext->size());
+    }
+};
+
+struct EncryptStackWiper {
+    unsigned char* salt;
+    size_t salt_len;
+    unsigned char* nonce;
+    size_t nonce_len;
+
+    // on destruction, wipe stack secrets
+    ~EncryptStackWiper() noexcept {
+        if (salt && salt_len > 0) sodium_memzero(salt, salt_len);
+        if (nonce && nonce_len > 0) sodium_memzero(nonce, nonce_len);
+        sodium_stackzero(1024);
     }
 };
 
@@ -88,17 +102,17 @@ std::string b64_encode(const unsigned char* data, size_t len) {
     return out;
 }
  
-std::vector<unsigned char> b64_decode(const unsigned char* encoded, size_t encoded_len) {
-    std::vector<unsigned char> out(encoded_len);
+SecureBuffer b64_decode(const unsigned char* encoded, size_t encoded_len) {
+    SecureBuffer out(encoded_len == 0 ? 1 : encoded_len);
     size_t decoded_len = 0;
     if (sodium_base642bin(
-            out.data(), out.size(),
+            out.data(), out.capacity(),
             reinterpret_cast<const char*>(encoded), encoded_len,
-            nullptr, &decoded_len, nullptr,
+            " \t\r\n", &decoded_len, nullptr,
             sodium_base64_VARIANT_ORIGINAL) != 0) {
         throw std::runtime_error("Base64 decode failed");
     }
-    out.resize(decoded_len);
+    out.set_size(decoded_len);
     return out;
 }
  
@@ -135,13 +149,14 @@ SecureBuffer derive_key(const SecureBuffer& passphrase, const unsigned char* sal
 // ─────────────────────────────────────────────────────────────────────────────
 // encrypt_message
 // ─────────────────────────────────────────────────────────────────────────────
-std::string encrypt_message(const SecureBuffer& plaintext,
-                            const SecureBuffer& passphrase) {
+SecureBuffer encrypt_message(const SecureBuffer& plaintext,
+                             const SecureBuffer& passphrase) {
     unsigned char salt[SALT_LEN];
     randombytes_buf(salt, SALT_LEN);
  
     unsigned char nonce[NONCE_LEN];
     randombytes_buf(nonce, NONCE_LEN);
+    EncryptStackWiper stack_wiper{salt, SALT_LEN, nonce, NONCE_LEN};
  
     //std::cout << "\n  [*] Deriving key (this takes a moment by design)..." << std::flush;
  
@@ -166,11 +181,24 @@ std::string encrypt_message(const SecureBuffer& plaintext,
         //  sodium_stackzero(2048);
     } // key locked here regardless of result or exception
  
-    std::string output;
+    SecureBuffer output(1); // placeholder, size will be set later
     if (result == 0) {
-        output = b64_encode(salt,  SALT_LEN)             + ":" +
-                 b64_encode(nonce, NONCE_LEN)            + ":" +
-                 b64_encode(ciphertext_buf.data(), ciphertext_len);
+        std::string salt_b64 = b64_encode(salt, SALT_LEN);
+        std::string nonce_b64 = b64_encode(nonce, NONCE_LEN);
+        std::string ct_b64 = b64_encode(ciphertext_buf.data(), ciphertext_len);
+        std::string joined = salt_b64 + ":" + nonce_b64 + ":" + ct_b64;
+
+        output = SecureBuffer(joined.size() == 0 ? 1 : joined.size());
+        if (!joined.empty()) {
+            std::memcpy(output.data(), joined.data(), joined.size());
+        }
+        output.set_size(joined.size());
+        output.lock_access();
+
+        sodium_memzero(salt_b64.data(), salt_b64.size());
+        sodium_memzero(nonce_b64.data(), nonce_b64.size());
+        sodium_memzero(ct_b64.data(), ct_b64.size());
+        sodium_memzero(joined.data(), joined.size());
     }
  
     sodium_memzero(ciphertext_buf.data(), ciphertext_buf.size());
@@ -187,8 +215,8 @@ std::string encrypt_message(const SecureBuffer& plaintext,
 // ─────────────────────────────────────────────────────────────────────────────
 std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
                                              const SecureBuffer& passphrase) {
-    std::vector<unsigned char> salt, nonce, ciphertext;
-    DecodedBufferWiper decoded_wiper{salt, nonce, ciphertext};
+    SecureBuffer salt(1), nonce(1), ciphertext(1); // decode buffer wipers will wipe these on scope exit
+    DecodedBufferWiper decoded_wiper{&salt, &nonce, &ciphertext};
     try {
         SecureAccessGuard payload_guard(payload);
 
@@ -419,7 +447,7 @@ void do_encrypt() {
     // Both buffers go read-only inside their own guards.
     // Guards unlock on construction and re-lock on destruction (scope exit),
     // so an exception inside encrypt_message cannot leave them unlocked.
-    std::string ciphertext;
+    SecureBuffer ciphertext(1);
     {
         SecureAccessGuard pt_guard(plaintext);
         SecureAccessGuard pp_guard(passphrase);
@@ -435,11 +463,17 @@ void do_encrypt() {
         
     std::cout << "\n─── ENCRYPTED MESSAGE ───────────────────────────────────\n\n";
     std::cout << "  " << std::string(54, '-') << '\n';
-    std::cout << "  " << ciphertext << '\n';
+    {
+        // unlock ciphertext for printing, will lock again on scope exit
+        SecureAccessGuard ct_guard(ciphertext);
+        const unsigned char* out = ciphertext.data();
+        for (size_t i = 0; i < ciphertext.size(); ++i) {
+            std::cout << static_cast<char>(out[i]);
+        }
+        std::cout << '\n';
+    }// ciphertext locked here
     std::cout << "  " << std::string(54, '-') << '\n';
     std::cout << "\n  Paste this into WhatsApp. It is safe to send openly.\n";
-    sodium_memzero(ciphertext.data(), ciphertext.size());
-    ciphertext.clear();
     std::cout << "\n  Press Enter to clear screen and return to menu...";
     std::cin.get();
     clear_screen();
