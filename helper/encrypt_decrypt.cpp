@@ -25,9 +25,9 @@
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 constexpr size_t SALT_LEN  = crypto_pwhash_SALTBYTES;
-constexpr size_t NONCE_LEN = crypto_aead_chacha20poly1305_ietf_NPUBBYTES;
-constexpr size_t KEY_LEN   = crypto_aead_chacha20poly1305_ietf_KEYBYTES;
-constexpr size_t TAG_LEN   = crypto_aead_chacha20poly1305_ietf_ABYTES;
+constexpr size_t NONCE_LEN = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+constexpr size_t KEY_LEN   = crypto_aead_xchacha20poly1305_ietf_KEYBYTES;
+constexpr size_t TAG_LEN   = crypto_aead_xchacha20poly1305_ietf_ABYTES;
 
 constexpr unsigned long long OPSLIMIT = crypto_pwhash_OPSLIMIT_SENSITIVE;
 constexpr size_t             MEMLIMIT = crypto_pwhash_MEMLIMIT_SENSITIVE;
@@ -105,18 +105,10 @@ std::vector<unsigned char> b64_decode(const unsigned char* encoded, size_t encod
 // ─────────────────────────────────────────────────────────────────────────────
 // derive_key
 //
-// NOTE on sodium_stackzero: sodium_stackzero(N) zeroes N bytes of the
-// *current* call frame's stack.  By the time we call it here, Argon2id's own
-// stack frames have already been unwound and their memory may have been
-// reused.  The call therefore zeroes OUR frame's locals (the `key` pointer,
-// loop variables, etc.), which is marginally useful but does NOT reliably
-// reach Argon2id's temporaries.
-//
-// There is no portable way to zero another function's already-freed stack
-// frame.  The defence that actually works is letting libsodium's own internal
-// sodium_memzero calls handle its state — which it does — and trusting that
-// the SecureBuffer holding the derived key is protected immediately after.
-// The sodium_stackzero call is kept as a best-effort measure.
+// NOTE: We intentionally avoid sodium_stackzero() here. In practice, fixed-size
+// stack wiping from this frame is only best-effort and can be platform-fragile.
+// libsodium already clears its own sensitive internals; our primary defense is
+// keeping derived key material in SecureBuffer and locking it immediately.
 // ─────────────────────────────────────────────────────────────────────────────
 SecureBuffer derive_key(const SecureBuffer& passphrase, const unsigned char* salt) {
     // The returned SecureBuffer starts R/W so crypto_pwhash can write into it.
@@ -129,8 +121,8 @@ SecureBuffer derive_key(const SecureBuffer& passphrase, const unsigned char* sal
         salt,
         OPSLIMIT, MEMLIMIT, crypto_pwhash_ALG_ARGON2ID13);
 
-    // Best-effort: wipe our own stack frame after the expensive KDF.
-    sodium_stackzero(2048);
+        //// Best-effort: wipe our own stack frame after the expensive KDF.
+    //    sodium_stackzero(2048);
 
     if (result != 0)
         throw std::runtime_error("Key derivation failed (out of memory?)");
@@ -157,13 +149,13 @@ std::string encrypt_message(const SecureBuffer& plaintext,
     std::cout << " done.\n";
  
     // Guard unlocks key read-only on construction; re-locks on scope exit,
-    // even if crypto_aead_chacha20poly1305_ietf_encrypt throws.
+    // even if crypto_aead_xchacha20poly1305_ietf_encrypt throws.
     std::vector<unsigned char> ciphertext_buf(plaintext.size() + TAG_LEN);
     unsigned long long ciphertext_len = 0;
     int result;
     {
         SecureAccessGuard key_guard(key);
-        result = crypto_aead_chacha20poly1305_ietf_encrypt(
+        result = crypto_aead_xchacha20poly1305_ietf_encrypt(
             ciphertext_buf.data(), &ciphertext_len,
             plaintext.data(), plaintext.size(),
             nullptr, 0,
@@ -171,7 +163,7 @@ std::string encrypt_message(const SecureBuffer& plaintext,
             nonce,
             key.data()
         );
-        sodium_stackzero(2048);
+        //  sodium_stackzero(2048);
     } // key locked here regardless of result or exception
  
     std::string output;
@@ -262,7 +254,7 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
     {
         // Guard unlocks key read-only; re-locks on scope exit even if decrypt throws.
         SecureAccessGuard key_guard(key);
-        result = crypto_aead_chacha20poly1305_ietf_decrypt(
+        result = crypto_aead_xchacha20poly1305_ietf_decrypt(
             plaintext_buf.data(), &plaintext_len,
             nullptr,
             ciphertext.data(), ciphertext.size(),
@@ -270,7 +262,6 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
             nonce.data(),
             key.data()
         );
-        sodium_stackzero(2048);
     } // key locked here regardless of result or exception
  
     if (result != 0) {
@@ -316,7 +307,9 @@ SecureBuffer get_passphrase(const std::string& prompt) {
     }
     std::cout << '\n';
 #else
-    ScopedTermios termios_guard(ECHO);
+    // Disable echo, canonical line buffering, and signal chars (^C/^Z) while
+    // reading secrets to avoid TTY-side passphrase buffering and leakage.
+    ScopedTermios termios_guard(static_cast<tcflag_t>(ECHO | ICANON | ISIG));
  
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF) {
