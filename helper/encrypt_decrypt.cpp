@@ -149,6 +149,12 @@ std::string encrypt_message(const SecureBuffer& plaintext,
 std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
                                              const SecureBuffer& passphrase) {
     std::vector<unsigned char> salt, nonce, ciphertext;
+    // local cleanup - salt, nonce, ciphertext by reference
+    auto wipe_decoded_buffers = [&]() noexcept {
+        if (!salt.empty()) sodium_memzero(salt.data(), salt.size());
+        if (!nonce.empty()) sodium_memzero(nonce.data(), nonce.size());
+        if (!ciphertext.empty()) sodium_memzero(ciphertext.data(), ciphertext.size());
+    };
     try {
         SecureAccessGuard payload_guard(payload);
 
@@ -161,8 +167,9 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
         const unsigned char* p = payload.data();
 
         // Trim ASCII whitespace without materializing payload in std::string.
-        while (p_begin < p_end && std::isspace(p[p_begin])) ++p_begin;
-        while (p_end > p_begin && std::isspace(p[p_end - 1])) --p_end;
+        // static_cast<unsigned char> to prevent undefined behaviour.
+        while (p_begin < p_end && std::isspace(static_cast<unsigned char>(p[p_begin]))) ++p_begin;
+        while (p_end > p_begin && std::isspace(static_cast<unsigned char>(p[p_end - 1]))) --p_end;
 
         for (size_t i = p_begin; i < p_end; ++i) {
             if (p[i] == ':') {
@@ -185,6 +192,7 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
 
         if (!format_ok) {
             std::cout << "\n  [!] Invalid payload format.\n";
+            wipe_decoded_buffers();
             return std::nullopt;
         }
 
@@ -193,12 +201,14 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
         ciphertext = b64_decode(p + second_colon + 1, p_end - second_colon - 1);
     } catch (const std::exception&) {
         std::cout << "\n  [!] Base64 decode error — payload may be corrupted.\n";
+        wipe_decoded_buffers();
         return std::nullopt;
     } 
  
     if (salt.size() != SALT_LEN || nonce.size() != NONCE_LEN ||
         ciphertext.size() < TAG_LEN) {
         std::cout << "\n  [!] Payload dimensions invalid.\n";
+        wipe_decoded_buffers();
         return std::nullopt;
     }
  
@@ -228,6 +238,7 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
  
     if (result != 0) {
         std::cout << "\n  [!] Decryption failed: wrong passphrase or message was tampered with.\n";
+        wipe_decoded_buffers();
         return std::nullopt;
     }
  
@@ -236,6 +247,8 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
     if (plaintext_len > 0)
         std::memcpy(exact.data(), plaintext_buf.data(), plaintext_len);
     exact.set_size(plaintext_len);
+    exact.lock_access();
+    wipe_decoded_buffers();
     
 
     return exact;
