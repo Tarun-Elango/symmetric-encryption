@@ -8,8 +8,11 @@ SecureAccessGuard::SecureAccessGuard(SecureBuffer& buf)
     buf_.unlock_read();
 }
 
-SecureAccessGuard::~SecureAccessGuard()
+SecureAccessGuard::~SecureAccessGuard() noexcept
 {
-    // lock it before the secure buffer wipes it   
-    buf_.lock_access();
+    // Destructors must not throw; best-effort relock.
+    try {
+        buf_.lock_access();
+    } catch (...) {
+    }
 }

@@ -13,6 +13,12 @@ void checked_mprotect(void* ptr, int (*fn)(void*)) {
         throw std::runtime_error("sodium_mprotect transition failed");
     }
 }
+
+// Cleanup paths must never throw but should still validate transitions.
+bool checked_mprotect_nothrow(void* ptr, int (*fn)(void*)) noexcept {
+    if (!ptr) return true;
+    return fn(ptr) == 0;
+}
 } // namespace
 
 // ── Constructor / Destructor ─────────────────────────
@@ -30,8 +36,9 @@ sodium_memzero(ptr_, capacity_);
 SecureBuffer::~SecureBuffer() {
     if (ptr_) {
         // Guarantee the region is writable so sodium_free can zero it.
-        // This is safe even if the buffer is already R/W.
-        sodium_mprotect_readwrite(ptr_);
+        // This is safe even if the buffer is already R/W. We validate the
+        // transition even though destructor paths cannot throw.
+        (void)checked_mprotect_nothrow(ptr_, sodium_mprotect_readwrite);
         sodium_free(ptr_);
         ptr_      = nullptr;
         capacity_ = 0;
@@ -55,7 +62,8 @@ SecureBuffer& SecureBuffer::operator=(SecureBuffer&& o) noexcept {
     if (this != &o) {
         // free existing
         if (ptr_) {
-            sodium_mprotect_readwrite(ptr_);
+            // Move assignment is noexcept, so this is checked best-effort.
+            (void)checked_mprotect_nothrow(ptr_, sodium_mprotect_readwrite);
             sodium_free(ptr_);
         }
 

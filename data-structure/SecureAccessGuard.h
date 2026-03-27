@@ -18,7 +18,7 @@ class SecureBuffer; // Forward declaration
 class SecureAccessGuard {
 public:
     explicit SecureAccessGuard(SecureBuffer& buf);
-    ~SecureAccessGuard();
+    ~SecureAccessGuard() noexcept;
 
     // Non-copyable, non-movable — guards are strictly scoped.
     SecureAccessGuard(const SecureAccessGuard&)            = delete;
