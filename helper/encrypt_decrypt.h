@@ -5,8 +5,7 @@
 
 #include "../data-structure/SecureBuffer.h"
 
-std::string encrypt_message(const SecureBuffer& plaintext, const SecureBuffer& passphrase);
-
+SecureBuffer encrypt_message(const SecureBuffer& plaintext, const SecureBuffer& passphrase);
 std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload, const SecureBuffer& passphrase);
 
 SecureBuffer get_passphrase(const std::string& prompt);
