@@ -1,6 +1,18 @@
 ## Symetric Encryption
 
-Built with libsodium and secure secret-handling practices (mlocked buffers, explicit read/write access control, and best-effort zeroization). Note: this reduces key exposure risk, but does not provide formal memory-safety guarantees for all C++ code paths.
+Purpose: Encrypt and decrypt messages using libsodium's crypto_aead_xchacha20poly1305_ietf_* functions. while using secure secret-handling practices throughout the program (mlocked buffers, explicit read/write access control, and best-effort zeroization).
+
+Note: this reduces key exposure risk by keeping private content in secure buffer while also making sure the memory region is manually wiped after use, but does not provide formal memory-safety guarantees for all C++ code paths.
+
+## Contents
+
+- [How to Build and Run](#how-to-build-and-run)
+- [Prerequisites](#prerequisites)
+- [Verify libsodium](#verify-libsodium)
+- [Build](#build)
+- [Run](#run)
+- [TODO - future improvements](#todo)
+
 
 ## How to Build and Run
 
@@ -36,3 +48,11 @@ g++ -std=c++17 -Wall -Wextra -pedantic -O2 \
 
 ### Run
 ./main
+
+---
+### TODO
+
+- get_message_secure terminal echo/prints - fix based on user needs
+- SecureAccessGuard - bad for multithreaded
+- sodium_stackzero(2048) unreliable
+- Payload parsing - exception handling
