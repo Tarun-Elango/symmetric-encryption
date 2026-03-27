@@ -119,7 +119,7 @@ SecureBuffer b64_decode(const unsigned char* encoded, size_t encoded_len) {
 // ─────────────────────────────────────────────────────────────────────────────
 // derive_key
 //
-// NOTE: We intentionally avoid sodium_stackzero() here. In practice, fixed-size
+// NOTE: We can avoid sodium_stackzero() here. In practice, fixed-size
 // stack wiping from this frame is only best-effort and can be platform-fragile.
 // libsodium already clears its own sensitive internals; our primary defense is
 // keeping derived key material in SecureBuffer and locking it immediately.
