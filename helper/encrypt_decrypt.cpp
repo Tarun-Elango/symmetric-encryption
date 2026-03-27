@@ -22,7 +22,7 @@
 #include "../data-structure/SecureAccessGuard.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Constants for key and encryption
 // ─────────────────────────────────────────────────────────────────────────────
 constexpr size_t SALT_LEN  = crypto_pwhash_SALTBYTES;
 constexpr size_t NONCE_LEN = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
@@ -78,7 +78,7 @@ private:
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Base64 helpers (ciphertext / salt / nonce are not secret)
+// Base64 helpers
 // ─────────────────────────────────────────────────────────────────────────────
 std::string b64_encode(const unsigned char* data, size_t len) {
     size_t encoded_len = sodium_base64_encoded_len(len, sodium_base64_VARIANT_ORIGINAL);
@@ -121,8 +121,8 @@ SecureBuffer derive_key(const SecureBuffer& passphrase, const unsigned char* sal
         salt,
         OPSLIMIT, MEMLIMIT, crypto_pwhash_ALG_ARGON2ID13);
 
-        //// Best-effort: wipe our own stack frame after the expensive KDF.
-    //    sodium_stackzero(2048);
+    // Best-effort: wipe our own stack frame after the expensive KDF.
+        sodium_stackzero(2048);
 
     if (result != 0)
         throw std::runtime_error("Key derivation failed (out of memory?)");
@@ -143,7 +143,7 @@ std::string encrypt_message(const SecureBuffer& plaintext,
     unsigned char nonce[NONCE_LEN];
     randombytes_buf(nonce, NONCE_LEN);
  
-    std::cout << "\n  [*] Deriving key (this takes a moment by design)..." << std::flush;
+    //std::cout << "\n  [*] Deriving key (this takes a moment by design)..." << std::flush;
  
     SecureBuffer key = derive_key(passphrase, salt);
     std::cout << " done.\n";
@@ -174,9 +174,11 @@ std::string encrypt_message(const SecureBuffer& plaintext,
     }
  
     sodium_memzero(ciphertext_buf.data(), ciphertext_buf.size());
- 
+  
     if (result != 0)
         throw std::runtime_error("Encryption failed");
+
+    
     return output;
 }
 
@@ -307,8 +309,7 @@ SecureBuffer get_passphrase(const std::string& prompt) {
     }
     std::cout << '\n';
 #else
-    // Disable echo, canonical line buffering, and signal chars (^C/^Z) while
-    // reading secrets to avoid TTY-side passphrase buffering and leakage.
+    // Disable echo, canonical line buffering, and signal chars (^C/^Z) 
     ScopedTermios termios_guard(static_cast<tcflag_t>(ECHO | ICANON | ISIG));
  
     int ch;
@@ -349,7 +350,6 @@ SecureBuffer get_passphrase_with_confirmation() {
 // ─────────────────────────────────────────────────────────────────────────────
 // get_message_secure
 // Reads message bytes directly into secure memory to avoid plaintext std::string
-// staging for user-entered messages.
 // ─────────────────────────────────────────────────────────────────────────────
 std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
     constexpr size_t MAX_MESSAGE = 16 * 1024;
@@ -372,8 +372,9 @@ std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
     }
     std::cout << '\n';
 #else
-    ScopedTermios termios_guard(ICANON); // immediate char reads; keep ECHO enabled
-
+    ScopedTermios termios_guard(
+        static_cast<tcflag_t>(ECHO | ICANON)
+    );
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF) {
         if (ch == 127 || ch == '\b') { // backspace / DEL
@@ -383,6 +384,7 @@ std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
             }
         } else if (len < MAX_MESSAGE) {
             buf.data()[len++] = static_cast<unsigned char>(ch);
+            std::cout << static_cast<char>(ch) << std::flush; // Remove: if you want more security
         }
     }
 

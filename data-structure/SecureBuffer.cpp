@@ -133,10 +133,6 @@ void SecureBuffer::load_string(const std::string& s) {
 // Requires the buffer to be readable (unlock_read or unlock_write state).
 // The caller must wipe the returned string with sodium_memzero() as soon
 // as it is no longer needed.
-//
-// NOTE: this call does NOT change the buffer's protection level.  The
-// caller is responsible for calling unlock_read() before this and
-// lock_access() afterwards if desired.
 
 std::string SecureBuffer::to_string() const {
     return std::string(reinterpret_cast<const char*>(ptr_), size_);

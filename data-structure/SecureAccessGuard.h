@@ -3,8 +3,8 @@
 // SecureAccessGuard
 //
 // RAII wrapper that calls unlock_read() on construction and lock_access() on
-// destruction.  This closes the gap where an exception thrown between an
-// explicit unlock_read() / lock_access() pair would leave the buffer
+// destruction. To close the gap for exception thrown between an
+// explicit unlock_read() / lock_access -> this could leave the buffer
 // permanently readable.
 //
 // Usage:

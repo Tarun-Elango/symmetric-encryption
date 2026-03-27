@@ -6,18 +6,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SecureBuffer
 //
-// Invariant summary:
 //   capacity_  — the size passed to sodium_malloc(); never mutates after ctor.
 //   size_       — how many bytes currently hold live data (≤ capacity_).
 //
 // Access-protection lifecycle:
-//   After construction the region is left READ/WRITE so the caller can fill it
-//   immediately (load_string, direct write via data()).  The caller must call
-//   lock_access() once it is done writing and before storing the buffer.
+//   After construction the region is left READ/WRITE, caller needs to lock access.
 //
 //   Before any read (unlock_read) or write (unlock_write) the corresponding
-//   mprotect call must be made.  The destructor always restores R/W before
-//   sodium_free so libsodium can zero the region.
+//   mprotect call must be made.  
+// The destructor always restores R/W before sodium_free so libsodium can zero 
+// the region.
 // ─────────────────────────────────────────────────────────────────────────────
 class SecureBuffer {
 public:
