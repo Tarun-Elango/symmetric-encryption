@@ -353,7 +353,8 @@ SecureBuffer get_passphrase(const std::string& prompt) {
 #endif
  
     buf.set_size(len);
-    // Leave buffer R/W — caller will lock after use or pass to crypto.
+    // Minimize exposure: return passphrase in no-access state.
+    buf.lock_access();
     return buf;
 }
 
@@ -366,8 +367,13 @@ SecureBuffer get_passphrase_with_confirmation() {
         SecureBuffer p1 = get_passphrase("  Passphrase        : ");
         SecureBuffer p2 = get_passphrase("  Confirm passphrase: ");
  
-        bool match = (p1.size() == p2.size()) &&
-                     (sodium_memcmp(p1.data(), p2.data(), p1.size()) == 0);
+        bool match = false;
+        if (p1.size() == p2.size()) {
+            // Temporarily expose both buffers as read-only for constant-time compare.
+            SecureAccessGuard p1_guard(p1);
+            SecureAccessGuard p2_guard(p2);
+            match = (sodium_memcmp(p1.data(), p2.data(), p1.size()) == 0);
+        } // p1 and p2 destroyed here and locked
  
         if (match) return p1;
  

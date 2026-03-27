@@ -4,6 +4,10 @@
 #include "helper/encrypt_decrypt.h"
 #include "helper/system_check.h"
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sample program for demonstrating symmetric encryption using libsodium.
+// ─────────────────────────────────────────────────────────────────────────────
+
 static const char* MENU = R"(
   [1]  Encrypt a message
   [2]  Decrypt a message
