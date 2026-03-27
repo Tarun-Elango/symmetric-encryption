@@ -17,7 +17,14 @@ pkg-config --modversion libsodium
 Navigate to the `src` directory and compile the program:
 
 ```bash
-g++ -O2 -std=c++17 main.cpp $(pkg-config --cflags --libs libsodium) -o main
+g++ -std=c++17 -Wall -Wextra -pedantic \
+  main.cpp \
+  helper/encrypt_decrypt.cpp \
+  helper/system_check.cpp \
+  data-structure/SecureBuffer.cpp \
+  data-structure/SecureAccessGuard.cpp \
+  $(pkg-config --cflags --libs libsodium) \
+  -o main
 ```
 
 ### Run

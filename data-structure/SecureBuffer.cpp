@@ -4,6 +4,17 @@
 #include <cstring>
 #include <stdexcept>
 
+namespace {
+//prevents silent protection-transition failures.
+void checked_mprotect(void* ptr, int (*fn)(void*)) {
+    if (!ptr) return;
+    if (fn(ptr) != 0) {
+        // throw error instead of silently continuing
+        throw std::runtime_error("sodium_mprotect transition failed");
+    }
+}
+} // namespace
+
 // ── Constructor / Destructor ─────────────────────────
 SecureBuffer::SecureBuffer(size_t capacity)
 : ptr_(nullptr),
@@ -61,15 +72,15 @@ SecureBuffer& SecureBuffer::operator=(SecureBuffer&& o) noexcept {
 
 // ── Access protection ────────────────────────────────
 void SecureBuffer::lock_access() {
-    if (ptr_) sodium_mprotect_noaccess(ptr_);
+    checked_mprotect(ptr_, sodium_mprotect_noaccess);
 }
 
 void SecureBuffer::unlock_read() {
-    if (ptr_) sodium_mprotect_readonly(ptr_);
+    checked_mprotect(ptr_, sodium_mprotect_readonly);
 }
 
 void SecureBuffer::unlock_write() {
-    if (ptr_) sodium_mprotect_readwrite(ptr_);
+    checked_mprotect(ptr_, sodium_mprotect_readwrite);
 }
 
 // ── Data access ──────────────────────────────────────
@@ -122,4 +133,3 @@ void SecureBuffer::load_string(const std::string& s) {
 std::string SecureBuffer::to_string() const {
     return std::string(reinterpret_cast<const char*>(ptr_), size_);
 }
-

@@ -17,9 +17,9 @@
   #include <unistd.h>
 #endif
 
-#include "system_check.cpp"
-#include "../data-structure/SecureBuffer.cpp"
-#include "../data-structure/SecureAccessGuard.cpp"
+#include "system_check.h"
+#include "../data-structure/SecureBuffer.h"
+#include "../data-structure/SecureAccessGuard.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -31,6 +31,51 @@ constexpr size_t TAG_LEN   = crypto_aead_chacha20poly1305_ietf_ABYTES;
 
 constexpr unsigned long long OPSLIMIT = crypto_pwhash_OPSLIMIT_SENSITIVE;
 constexpr size_t             MEMLIMIT = crypto_pwhash_MEMLIMIT_SENSITIVE;
+
+namespace {
+// zero the salt, nonce, and ciphertext buffers on exits
+struct DecodedBufferWiper {
+    std::vector<unsigned char>& salt;
+    std::vector<unsigned char>& nonce;
+    std::vector<unsigned char>& ciphertext;
+
+    ~DecodedBufferWiper() noexcept {
+        if (!salt.empty()) sodium_memzero(salt.data(), salt.size());
+        if (!nonce.empty()) sodium_memzero(nonce.data(), nonce.size());
+        if (!ciphertext.empty()) sodium_memzero(ciphertext.data(), ciphertext.size());
+    }
+};
+
+#ifndef _WIN32
+class ScopedTermios {
+//Constructor: saves original terminal settings, then temporarily clears the bits in clear_lflag_bits.
+//Destructor: restores the saved original settings.
+public:
+    explicit ScopedTermios(tcflag_t clear_lflag_bits) : active_(false) { // if clear_lflag_bits is ECHO, then turn off ECHO
+        if (tcgetattr(STDIN_FILENO, &old_term_) != 0) return;
+
+        termios new_term = old_term_;
+        new_term.c_lflag &= ~clear_lflag_bits;
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &new_term) != 0) return;
+
+        active_ = true;
+    }
+
+    ~ScopedTermios() {
+        if (active_) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &old_term_);
+        }
+    }
+
+    ScopedTermios(const ScopedTermios&) = delete;
+    ScopedTermios& operator=(const ScopedTermios&) = delete;
+
+private:
+    termios old_term_{};
+    bool active_;
+};
+#endif
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Base64 helpers (ciphertext / salt / nonce are not secret)
@@ -149,12 +194,7 @@ std::string encrypt_message(const SecureBuffer& plaintext,
 std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
                                              const SecureBuffer& passphrase) {
     std::vector<unsigned char> salt, nonce, ciphertext;
-    // local cleanup - salt, nonce, ciphertext by reference
-    auto wipe_decoded_buffers = [&]() noexcept {
-        if (!salt.empty()) sodium_memzero(salt.data(), salt.size());
-        if (!nonce.empty()) sodium_memzero(nonce.data(), nonce.size());
-        if (!ciphertext.empty()) sodium_memzero(ciphertext.data(), ciphertext.size());
-    };
+    DecodedBufferWiper decoded_wiper{salt, nonce, ciphertext};
     try {
         SecureAccessGuard payload_guard(payload);
 
@@ -192,7 +232,6 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
 
         if (!format_ok) {
             std::cout << "\n  [!] Invalid payload format.\n";
-            wipe_decoded_buffers();
             return std::nullopt;
         }
 
@@ -201,14 +240,12 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
         ciphertext = b64_decode(p + second_colon + 1, p_end - second_colon - 1);
     } catch (const std::exception&) {
         std::cout << "\n  [!] Base64 decode error — payload may be corrupted.\n";
-        wipe_decoded_buffers();
         return std::nullopt;
     } 
  
     if (salt.size() != SALT_LEN || nonce.size() != NONCE_LEN ||
         ciphertext.size() < TAG_LEN) {
         std::cout << "\n  [!] Payload dimensions invalid.\n";
-        wipe_decoded_buffers();
         return std::nullopt;
     }
  
@@ -238,7 +275,6 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
  
     if (result != 0) {
         std::cout << "\n  [!] Decryption failed: wrong passphrase or message was tampered with.\n";
-        wipe_decoded_buffers();
         return std::nullopt;
     }
  
@@ -248,7 +284,6 @@ std::optional<SecureBuffer> decrypt_message(SecureBuffer& payload,
         std::memcpy(exact.data(), plaintext_buf.data(), plaintext_len);
     exact.set_size(plaintext_len);
     exact.lock_access();
-    wipe_decoded_buffers();
     
 
     return exact;
@@ -281,11 +316,7 @@ SecureBuffer get_passphrase(const std::string& prompt) {
     }
     std::cout << '\n';
 #else
-    struct termios old_term, new_term;
-    tcgetattr(STDIN_FILENO, &old_term);
-    new_term = old_term;
-    new_term.c_lflag &= ~ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+    ScopedTermios termios_guard(ECHO);
  
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF) {
@@ -296,7 +327,6 @@ SecureBuffer get_passphrase(const std::string& prompt) {
         }
     }
  
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
     std::cout << '\n';
 #endif
  
@@ -349,11 +379,7 @@ std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
     }
     std::cout << '\n';
 #else
-    struct termios old_term, new_term;
-    tcgetattr(STDIN_FILENO, &old_term);
-    new_term = old_term;
-    new_term.c_lflag &= ~ICANON; // immediate char reads; keep ECHO enabled
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+    ScopedTermios termios_guard(ICANON); // immediate char reads; keep ECHO enabled
 
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF) {
@@ -367,7 +393,6 @@ std::optional<SecureBuffer> get_message_secure(const std::string& prompt) {
         }
     }
 
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
     std::cout << '\n';
 #endif
 

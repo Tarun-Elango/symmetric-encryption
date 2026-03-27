@@ -1,7 +1,8 @@
 #include <sodium.h>
 #include <iostream>
 #include <string>
-#include "helper/encrypt_decrypt.cpp"
+#include "helper/encrypt_decrypt.h"
+#include "helper/system_check.h"
 
 static const char* MENU = R"(
   [1]  Encrypt a message
