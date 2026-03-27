@@ -9,9 +9,15 @@
 
 
 ## Purpose
-Encrypt and decrypt messages using libsodium's crypto_aead_xchacha20poly1305_ietf_* functions. while using secure secret-handling practices throughout the program (mlocked buffers, explicit read/write access control, and best-effort zeroization).
+Encrypt and decrypt messages using libsodium's **crypto_aead_xchacha20poly1305_ietf_encrypt** function. 
 
-Note: this reduces key exposure risk by keeping private content in secure buffer while also making sure the memory region is manually wiped after use, but does not provide formal memory-safety guarantees for all C++ code paths.
+Secret material — plaintext, passphrase, and derived key — is confined to sodium_malloc'd regions for the lifetime of each value:
+
+- mlock'd — pages are pinned in RAM, preventing swap to disk
+- mprotect'd — memory is set to no-access by default; unlocked read-only only for the duration of each cryptographic call, then re-locked immediately after
+- zeroed on release — sodium_free guarantees a secure wipe before the region is returned to the OS
+
+**Note**: this reduces key exposure risk by keeping private content in secure buffer while also making sure the memory region is manually wiped after use, but does not provide formal memory-safety guarantees for all C++ code paths. Created for learning purposes.
 
 ---
 ## How it works
